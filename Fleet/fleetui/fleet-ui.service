@@ -1,0 +1,21 @@
+[Unit]
+Description=Fleet UI
+After=docker.service
+Requires=docker.service
+
+[Service]
+EnvironmentFile=/etc/environment
+User=core
+
+TimeoutStartSec=0
+ExecStartPre=-/usr/bin/docker kill fleet-ui
+ExecStartPre=-/usr/bin/docker rm fleet-ui
+ExecStartPre=/usr/bin/docker pull purpleworks/fleet-ui:latest
+ExecStart=/usr/bin/docker run --name fleet-ui \
+      -p 3001:3000 \
+      -e ETCD_PEER='http://${COREOS_PRIVATE_IPV4}:4001' \
+      -v /home/core/cloudops-poc.pem \
+      purpleworks/fleet-ui:latest
+ExecStop=/usr/bin/docker stop fleet-ui
+[X-Fleet]
+MachineMetadata=role=services

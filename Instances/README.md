@@ -1,3 +1,3 @@
-# coreos/Instances
+# coreos - Instances
 
 CoreOS cloud-config templates
