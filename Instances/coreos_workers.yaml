@@ -1,0 +1,47 @@
+#cloud-config
+coreos:
+  etcd2:
+    discovery-proxy: http://255.255.255.255:3128
+    discovery: https://discovery.etcd.io/XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+    listen-client-urls: http://0.0.0.0:2379,http://0.0.0.0:4001
+    proxy: on
+  fleet:
+    # It would be $public_ipv4, if there was one and private_ipv4 wasn't accessible
+    public-ip: $private_ipv4
+    metadata: "role=worker,provider=openstack"
+  units:
+    - name: etcd2.service
+      command: start
+    - name: fleet.service
+      command: start
+  update:
+    reboot-strategy: best-effort
+
+ssh_authorized_keys:
+  - ssh-rsa AA...lZ
+
+write_files:
+  - path: /etc/systemd/timesyncd.conf
+    content: |
+      [Time]
+      # NTP=0.pool.example.com 1.pool.example.com
+      NTP=255.255.255.0
+  - path: /etc/systemd/system/docker.service.d/http-proxy.conf
+    content: |
+      [Service]
+      Environment="HTTP_PROXY=http://255.255.255.255:3128"
+  - path: /home/core/.bashrc
+    owner: core:core
+    permissions: 0655
+    content: |
+      # Test for an interactive shell.  There is no need to set anything
+      # past this point for scp and rcp, and it's important to refrain from
+      # outputting anything in those cases.
+      if [[ $- != *i* ]] ; then
+      	# Shell is non-interactive.  Be done now!
+      	return
+      fi
+      # Put your fun stuff here.
+      alias csysdig="docker run -i -t --rm --privileged -v /var/run/docker.sock:/host/var/run/docker.sock -v /dev:/host/dev -v /proc:/host/proc:ro sysdig/sysdig csysdig -pc"
+      alias sysdig="docker run -i -t --rm --privileged -v /var/run/docker.sock:/host/var/run/docker.sock -v /dev:/host/dev -v /proc:/host/proc:ro sysdig/sysdig sysdig"
+      export PS1='\[\033[01;35m\]\u@\h\[\033[01;34m\] \w \$\[\033[00m\]'
