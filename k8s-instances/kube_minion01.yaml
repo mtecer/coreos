@@ -1,0 +1,107 @@
+#cloud-config
+hostname: kube_minion01
+coreos:  
+  etcd2:
+    discovery-proxy: http://127.0.0.1:3128
+    discovery: https://discovery.etcd.io/3d755e6466a1e8ea820cbc664cd63763
+    listen-client-urls: http://0.0.0.0:2379,http://0.0.0.0:4001
+    proxy: on
+  fleet:
+    # It would be $public_ipv4, if there was one and private_ipv4 wasn't accessible
+    public-ip: $private_ipv4
+    metadata: "role=worker,provider=openstack"
+  flannel:
+    interface: $private_ipv4  
+  units:
+    - name: docker.service
+      command: start
+      drop-ins:
+        - name: 40-requires-flannel.conf
+          content: |
+            [Unit]
+            Requires=flanneld.service
+            After=flanneld.service
+        - name: 50-http-proxy.conf
+          content: |
+            [Service]
+            Environment="HTTP_PROXY=http://127.0.0.1:3128"  
+    - name: early-docker.service
+      drop-ins:
+        - name: 50-http-proxy.conf
+          content: |
+            [Service]
+            Environment="HTTP_PROXY=http://127.0.0.1:3128"
+    - name: etcd2.service
+      command: start
+      drop-ins:
+        - name: "timeout.conf"
+          content: |
+            [Service]
+            TimeoutStartSec=0
+    - name: fleet.service
+      command: start
+    - name: flanneld.service
+      command: start
+      drop-ins:
+        - name: 40-options-symlink.conf
+          content: |
+            [Service]
+            ExecStartPre=/usr/bin/ln -sf /etc/flannel/options.env /run/flannel/options.env
+        - name: 50-network-config.conf
+          content: |
+            [Service]
+            ExecStartPre=/usr/bin/etcdctl set /coreos.com/network/config '{ "Network": "10.172.0.0/16", "Backend": {"Type": "vxlan"} }'
+    - name: kubelet.service
+      command: start
+      content: |
+        [Unit]
+        Description=Kubernetes Kubelet
+        Documentation=https://github.com/GoogleCloudPlatform/kubernetes
+        Requires=flanneld.service
+        After=flanneld.service
+        
+        [Service]
+        EnvironmentFile=/etc/environment
+        ExecStart=/usr/bin/kubelet \
+          --api_servers=https://127.0.0.1 \
+          --register-node=true \
+          --allow-privileged=true \
+          --config=/etc/kubernetes/manifests \
+          --hostname-override=${COREOS_PRIVATE_IPV4} \
+          --cluster-dns=172.17.17.10 \
+          --cluster_domain=cluster.local \
+          --kubeconfig=/etc/kubernetes/kubeconfig_worker.yaml \
+          --tls-cert-file=/etc/kubernetes/ssl/worker.pem \
+          --tls-private-key-file=/etc/kubernetes/ssl/worker-key.pem \
+          --cadvisor-port=0
+        Restart=always
+        RestartSec=10
+        [Install]
+        WantedBy=multi-user.target
+  update:
+    reboot-strategy: best-effort
+
+ssh_authorized_keys:
+  - ssh-rsa XYZ
+
+write_files:
+  - path: /etc/flannel/options.env
+    content: |
+      FLANNELD_IFACE=eth0
+      FLANNELD_ETCD_ENDPOINTS=http://127.0.0.1:2379,http://127.0.0.1:2379,http://127.0.0.1:2379
+  - path: /etc/systemd/timesyncd.conf
+    content: |
+      [Time]
+      # NTP=0.pool.example.com 1.pool.example.com
+      NTP=127.0.0.1
+  - path: /home/core/.bashrc
+    owner: core:core
+    permissions: 0655
+    content: |
+      if [[ $- != *i* ]] ; then
+      	# Test for an interactive shell. Shell is non-interactive.  Be done now!
+      	return
+      fi
+      alias csysdig="docker run -i -t --rm --privileged -v /var/run/docker.sock:/host/var/run/docker.sock -v /dev:/host/dev -v /proc:/host/proc:ro sysdig/sysdig csysdig -pc"
+      alias sysdig="docker run -i -t --rm --privileged -v /var/run/docker.sock:/host/var/run/docker.sock -v /dev:/host/dev -v /proc:/host/proc:ro sysdig/sysdig sysdig"
+      export PS1='\[\033[01;35m\]\u@\h\[\033[01;34m\] \w \$\[\033[00m\]'

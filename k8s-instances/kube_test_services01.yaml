@@ -1,0 +1,51 @@
+#cloud-config
+hostname: kube_test_services01
+coreos:  
+  etcd2:
+    name: etcd2-01
+    initial-cluster-token: etcd2_cluster_01
+    initial-cluster: "etcd2-01=http://127.0.0.1:2380,etcd2-02=http://127.0.0.1:2380,etcd2-03=http://127.0.0.1:2380"
+    initial-cluster-state: new
+    advertise-client-urls: http://$private_ipv4:2379  
+    initial-advertise-peer-urls: http://$private_ipv4:2380
+    listen-client-urls: http://0.0.0.0:2379
+    listen-peer-urls: http://$private_ipv4:2380
+  fleet:
+    public-ip: $private_ipv4
+    metadata: "role=services,provider=openstack"
+  units:
+    - name: docker.service
+      command: start
+      drop-ins:
+        - name: 50-http-proxy.conf
+          content: |
+            [Service]
+            Environment="HTTP_PROXY=http://127.0.0.1:3128"  
+    - name: etcd2.service
+      command: start
+      drop-ins:
+        - name: "timeout.conf"
+          content: |
+            [Service]
+            TimeoutStartSec=0
+    - name: fleet.service
+      command: start
+  update:
+    reboot-strategy: best-effort
+
+write_files:
+  - path: /etc/systemd/timesyncd.conf
+    content: |
+      [Time]
+      NTP=127.0.0.1
+  - path: /home/core/.bashrc
+    owner: core:core
+    permissions: 0655
+    content: |
+      if [[ $- != *i* ]] ; then
+      	# Test for an interactive shell. Shell is non-interactive.  Be done now!
+      	return
+      fi
+      alias csysdig="docker run -i -t --rm --privileged -v /var/run/docker.sock:/host/var/run/docker.sock -v /dev:/host/dev -v /proc:/host/proc:ro sysdig/sysdig csysdig -pc"
+      alias sysdig="docker run -i -t --rm --privileged -v /var/run/docker.sock:/host/var/run/docker.sock -v /dev:/host/dev -v /proc:/host/proc:ro sysdig/sysdig sysdig"
+      export PS1='\[\033[01;35m\]\u@\h\[\033[01;34m\] \w \$\[\033[00m\]'

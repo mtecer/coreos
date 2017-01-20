@@ -1,0 +1,87 @@
+#cloud-config
+hostname: kube_services01
+coreos:  
+  etcd2:
+    discovery-proxy: http://127.0.0.1:3128
+    # https://discovery.etcd.io/new?size=3
+    # https://discovery.etcd.io/3d755e6466a1e8ea820cbc664cd63763
+    discovery: https://discovery.etcd.io/3d755e6466a1e8ea820cbc664cd63763
+    # multi-region and multi-cloud deployments need to use $public_ipv4
+    advertise-client-urls: http://$private_ipv4:2379,http://$private_ipv4:4001    
+    initial-advertise-peer-urls: http://$private_ipv4:2380,http://$private_ipv4:7001
+    listen-client-urls: http://0.0.0.0:2379,http://0.0.0.0:4001
+    listen-peer-urls: http://$private_ipv4:2380,http://$private_ipv4:7001
+  fleet:
+    # It would be $public_ipv4, if there was one and private_ipv4 wasn't accessible
+    public-ip: $private_ipv4
+    metadata: "role=services,provider=openstack"
+  # flannel:
+  #   interface: $private_ipv4
+  units:
+    - name: docker.service
+      command: start
+      drop-ins:
+        - name: 50-http-proxy.conf
+          content: |
+            [Service]
+            Environment="HTTP_PROXY=http://127.0.0.1:3128"  
+    - name: etcd2.service
+      command: start
+      drop-ins:
+        - name: "timeout.conf"
+          content: |
+            [Service]
+            TimeoutStartSec=0
+    - name: fleet.service
+      command: start
+    # - name: flanneld.service
+    #   command: start
+    #   drop-ins:
+    #     - name: 50-network-config.conf
+    #       content: |
+    #         [Service]
+    #         ExecStartPre=/usr/bin/etcdctl set /coreos.com/network/config '{ "Network": "10.172.0.0/16", "Backend": {"Type": "vxlan"} }'
+    - name: coregi.service
+      command: start
+      content: |
+        [Unit]
+        Description=CoreGI
+        After=docker.service
+        Requires=docker.service
+
+        [Service]
+        EnvironmentFile=/etc/environment
+        User=core
+        TimeoutStartSec=0
+        ExecStartPre=-/usr/bin/docker kill coregi
+        ExecStartPre=-/usr/bin/docker rm coregi
+        ExecStartPre=/usr/bin/docker pull yodlr/coregi:latest
+        ExecStart=/usr/bin/docker run --name coregi \
+              -p 3000:3000 \
+              -e ETCD_HOST=${COREOS_PRIVATE_IPV4} \
+              -e FLEET_ENDPOINT='http://${COREOS_PRIVATE_IPV4}:2379' \
+              yodlr/coregi:latest
+        ExecStop=/usr/bin/docker stop coregi
+  update:
+    reboot-strategy: best-effort
+
+ssh_authorized_keys:
+  - ssh-rsa XYZ
+
+write_files:
+  - path: /etc/systemd/timesyncd.conf
+    content: |
+      [Time]
+      # NTP=0.pool.example.com 1.pool.example.com
+      NTP=127.0.0.1
+  - path: /home/core/.bashrc
+    owner: core:core
+    permissions: 0655
+    content: |
+      if [[ $- != *i* ]] ; then
+      	# Test for an interactive shell. Shell is non-interactive.  Be done now!
+      	return
+      fi
+      alias csysdig="docker run -i -t --rm --privileged -v /var/run/docker.sock:/host/var/run/docker.sock -v /dev:/host/dev -v /proc:/host/proc:ro sysdig/sysdig csysdig -pc"
+      alias sysdig="docker run -i -t --rm --privileged -v /var/run/docker.sock:/host/var/run/docker.sock -v /dev:/host/dev -v /proc:/host/proc:ro sysdig/sysdig sysdig"
+      export PS1='\[\033[01;35m\]\u@\h\[\033[01;34m\] \w \$\[\033[00m\]'
